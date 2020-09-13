@@ -60,9 +60,9 @@ namespace Oxide.Plugins
 
                 foreach (ItemDefinition item in ItemManager.itemList)
                 {
-                    if (config.Items.Find(x => x.Shortname == item.shortname) != null) continue;
+                    if (config.RewardItems.Find(x => x.Shortname == item.shortname) != null) continue;
 
-                    config.Items.Add(new RewardItem {
+                    config.RewardItems.Add(new RewardItem {
                         Shortname = item.shortname,
                         Amount = 1
                     });
@@ -86,7 +86,7 @@ namespace Oxide.Plugins
         {
             public string ImageURL = "https://i.imgur.com/fCJrUYL.png";
             public bool WipeOnNewSave = true;
-            public List<RewardItem> Items = new List<RewardItem>();
+            public List<RewardItem> RewardItems = new List<RewardItem>();
         }
 
         class RewardItem
@@ -384,7 +384,7 @@ namespace Oxide.Plugins
                 Container.itemList.Clear();
                 Container.MarkDirty();
 
-                RewardItem rewardItem = Instance.config.Items.Where(x => !x.Hide).ToList().GetRandom();
+                RewardItem rewardItem = Instance.config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
                 if (rewardItem == null)
                 {
                     return;

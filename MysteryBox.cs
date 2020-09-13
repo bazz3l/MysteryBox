@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
-    [Info("Mystery Box", "Bazz3l", "1.0.1")]
+    [Info("Mystery Box", "Bazz3l", "1.0.2")]
     [Description("Mystery box, unlock boxes with random loot items inside.")]
     class MysteryBox : RustPlugin
     {
@@ -17,6 +17,7 @@ namespace Oxide.Plugins
         private const string _successPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
         private const string _startPrefab = "assets/prefabs/deployable/repair bench/effects/skinchange_spraypaint.prefab";
         private const string _panelName = "mysterybox_panel";
+        private const string _permName = "maysterybox.use";
         private List<BoxController> _controllers = new List<BoxController>();
         private CuiElementContainer _element = new CuiElementContainer();
         private CuiTextComponent _textComponent;
@@ -88,6 +89,20 @@ namespace Oxide.Plugins
         #endregion
 
         #region Oxide
+        protected override void LoadDefaultMessages()
+        {
+            lang.RegisterMessages(new Dictionary<string, string> {
+                { "InvalidSyntax", "Invalid syntax: give.mysterybox <steamid> <amount>" },
+                { "NoPermission", "No permission." },
+                { "NoBoxes", "You have 0 boxes left." },
+                { "NoPlayer", "No player found." },
+                { "Wiped", "Data cleared." },
+                { "Reward", "You have rewarded {0} boxes to open, /mystery" },
+                { "Given", "{0} was given {1} boxes." },
+                { "Error", "Something went wrong." }
+            }, this);
+        }
+
         private void OnServerInitialized()
         {
             LoadUI();
@@ -611,16 +626,22 @@ namespace Oxide.Plugins
         [ChatCommand("mystery")]
         private void MysteryCommand(BasePlayer player, string command, string[] args)
         {
+            if (!HasPermission(player))
+            {
+                player.ChatMessage(Lang("NoPermission", player.UserIDString));
+                return;
+            }
+
             if (HasReachedLimit(player))
             {
-                player.ChatMessage("You have no boxes left.");
+                player.ChatMessage(Lang("NoBoxes", player.UserIDString));
                 return;
             }
 
             BoxController controller = BoxController.Find(player);
             if (controller == null || !controller.CanShow() || controller.IsOpened)
             {
-                player.ChatMessage("Something went wrong!");
+                player.ChatMessage(Lang("Error", player.UserIDString));
                 return;
             }
 
@@ -636,9 +657,15 @@ namespace Oxide.Plugins
                 return;
             }
 
+            if (!HasPermission(player))
+            {
+                player.ChatMessage(Lang("NoPermission", player.UserIDString));
+                return;
+            }
+
             if (HasReachedLimit(player))
             {
-                player.ChatMessage("You have no boxes left.");
+                player.ChatMessage(Lang("NoBoxes", player.UserIDString));
                 return;
             }
 
@@ -668,20 +695,20 @@ namespace Oxide.Plugins
         {
             if (arg.Player() != null)
             {
-                arg.ReplyWith($"[{Name}]: Not allowed.");
+                arg.ReplyWith(Lang("NoPermission"));
                 return;
             }
 
             if (arg.Args.Length != 2)
             {
-                arg.ReplyWith($"[{Name}]: Invalid syntax: give.mysterybox <steamid> <amount>");
+                arg.ReplyWith(Lang("InvalidSyntax"));
                 return;
             }
 
             BasePlayer target = BasePlayer.Find(arg.Args[0]);
             if (target == null)
             {
-                arg.ReplyWith($"[{Name}]: Invalid player.");
+                arg.ReplyWith(Lang("NoPlayer"));
                 return;
             }
 
@@ -689,15 +716,15 @@ namespace Oxide.Plugins
 
             if (!int.TryParse(arg.Args[1], out amount))
             {
-                arg.ReplyWith($"[{Name}]: Invalid syntax: give.mysterybox <steamid> <amount>");
+                arg.ReplyWith(Lang("InvalidSyntax"));
                 return;
             }
 
             SetPlayerBoxes(target, amount);
 
-            target.ChatMessage($"You have {amount} boxes to open, /mystery");
+            target.ChatMessage(Lang("Reward", target.UserIDString, amount));
 
-            arg.ReplyWith($"{target.userID} was given {amount} boxes.");
+            arg.ReplyWith(Lang("Given", target.UserIDString, target.userID, amount));
         }
 
         [ConsoleCommand("wipe.mysterybox")]
@@ -705,14 +732,20 @@ namespace Oxide.Plugins
         {
             if (arg.Player() != null)
             {
-                arg.ReplyWith($"[{Name}]: Not allowed.");
+                arg.ReplyWith(Lang("NoPermission"));
                 return;
             }
 
             WipePlayerBoxes();
 
-            arg.ReplyWith($"[{Name}]: Player data wiped.");
+            arg.ReplyWith(Lang("Wiped"));
         }
+        #endregion
+
+        #region Helpers
+        private bool HasPermission(BasePlayer player) => permission.UserHasPermission(player.UserIDString, _permName);
+
+        private string Lang(string key, string id = null, params object[] args) => string.Format(lang.GetMessage(key, this, id), args);
         #endregion
     }
 }

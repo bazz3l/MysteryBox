@@ -93,6 +93,7 @@ namespace Oxide.Plugins
         {
             public string Shortname;
             public int Amount;
+            public bool Hide;
         }
         #endregion
 
@@ -383,7 +384,7 @@ namespace Oxide.Plugins
                 Container.itemList.Clear();
                 Container.MarkDirty();
 
-                RewardItem rewardItem = Instance.config.Items.GetRandom();
+                RewardItem rewardItem = Instance.config.Items.Where(x => !x.Hide).ToList().GetRandom();
                 if (rewardItem == null)
                 {
                     return;

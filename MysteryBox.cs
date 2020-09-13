@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Collections;
 using System.Linq;
-using System;
 using Oxide.Game.Rust.Cui;
 using Oxide.Core;
 using UnityEngine;
@@ -9,7 +8,7 @@ using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
-    [Info("Mystery Box", "Bazz3l", "1.0.2")]
+    [Info("Mystery Box", "Bazz3l", "1.0.3")]
     [Description("Mystery box, unlock boxes with random loot items inside.")]
     class MysteryBox : RustPlugin
     {
@@ -17,7 +16,7 @@ namespace Oxide.Plugins
         private const string _successPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
         private const string _startPrefab = "assets/prefabs/deployable/repair bench/effects/skinchange_spraypaint.prefab";
         private const string _panelName = "mysterybox_panel";
-        private const string _permName = "maysterybox.use";
+        private const string _permName = "mysterybox.use";
         private List<BoxController> _controllers = new List<BoxController>();
         private CuiElementContainer _element = new CuiElementContainer();
         private CuiTextComponent _textComponent;
@@ -61,9 +60,12 @@ namespace Oxide.Plugins
 
                 foreach (ItemDefinition item in ItemManager.itemList)
                 {
-                    if (config.Items.Contains(item.shortname)) continue;
+                    if (config.Items.Find(x => x.Shortname == item.shortname) != null) continue;
 
-                    config.Items.Add(item.shortname);
+                    config.Items.Add(new RewardItem {
+                        Shortname = item.shortname,
+                        Amount = 1
+                    });
                 }
 
                 SaveConfig();
@@ -84,7 +86,13 @@ namespace Oxide.Plugins
         {
             public string ImageURL = "https://i.imgur.com/fCJrUYL.png";
             public bool WipeOnNewSave = true;
-            public List<string> Items = new List<string>();
+            public List<RewardItem> Items = new List<RewardItem>();
+        }
+
+        class RewardItem
+        {
+            public string Shortname;
+            public int Amount;
         }
         #endregion
 
@@ -105,6 +113,8 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
+            permission.RegisterPermission(_permName, this);
+
             LoadUI();
 
             foreach (BasePlayer player in BasePlayer.activePlayerList)
@@ -373,8 +383,19 @@ namespace Oxide.Plugins
                 Container.itemList.Clear();
                 Container.MarkDirty();
 
-                Item item = ItemManager.CreateByName(Instance.config.Items.GetRandom());
-                if (item == null || item.MoveToContainer(Container, -1, true))
+                RewardItem rewardItem = Instance.config.Items.GetRandom();
+                if (rewardItem == null)
+                {
+                    return;
+                }
+
+                Item item = ItemManager.CreateByName(rewardItem.Shortname, rewardItem.Amount);
+                if (item == null)
+                {
+                    return;
+                }
+
+                if (item.MoveToContainer(Container, -1, true))
                 {
                     return;
                 }

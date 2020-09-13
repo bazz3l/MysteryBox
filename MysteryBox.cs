@@ -105,7 +105,7 @@ namespace Oxide.Plugins
                 { "NoBoxes", "You have 0 boxes left." },
                 { "NoPlayer", "No player found." },
                 { "Wiped", "Data cleared." },
-                { "Reward", "You have rewarded {0} boxes to open, /mystery" },
+                { "Reward", "You have been rewarded {0} mystery boxes, /mystery" },
                 { "Given", "{0} was given {1} boxes." },
                 { "Error", "Something went wrong." }
             }, this);

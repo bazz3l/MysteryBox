@@ -13,16 +13,16 @@ namespace Oxide.Plugins
     public class MysteryBox : RustPlugin
     {
         #region Fields
-        private const string _successPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
-        private const string _startPrefab = "assets/prefabs/deployable/repair bench/effects/skinchange_spraypaint.prefab";
-        private const string _panelName = "mysterybox_panel";
-        private const string _permName = "mysterybox.use";
-        private List<BoxController> _controllers = new List<BoxController>();
-        private CuiElementContainer _element = new CuiElementContainer();
+        private const string SuccessPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
+        private const string StartPrefab = "assets/prefabs/deployable/repair bench/effects/skinchange_spraypaint.prefab";
+        private const string PanelName = "mysterybox_panel";
+        private const string PermName = "mysterybox.use";
+        private readonly List<BoxController> _controllers = new List<BoxController>();
+        private readonly CuiElementContainer _element = new CuiElementContainer();
         private CuiTextComponent _textComponent;
-        private StoredData stored;
-        private PluginConfig config;
-        private static MysteryBox Instance;
+        private StoredData _stored;
+        private PluginConfig _config;
+        private static MysteryBox _instance;
         #endregion
 
         #region Storage
@@ -33,17 +33,17 @@ namespace Oxide.Plugins
 
         void LoadData()
         {
-            stored = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
+            _stored = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
         }
 
         void SaveData()
         {
-            Interface.Oxide.DataFileSystem.WriteObject(Name, stored);
+            Interface.Oxide.DataFileSystem.WriteObject(Name, _stored);
         }
         #endregion
 
         #region Config
-        protected override void LoadDefaultConfig() => config = new PluginConfig();
+        protected override void LoadDefaultConfig() => _config = new PluginConfig();
 
         protected override void LoadConfig()
         {
@@ -51,21 +51,18 @@ namespace Oxide.Plugins
 
             try
             {
-                config = Config.ReadObject<PluginConfig>();
+                _config = Config.ReadObject<PluginConfig>();
 
-                if (config == null)
+                if (_config == null)
                 {
                     throw new JsonException();
                 }
 
                 foreach (ItemDefinition item in ItemManager.itemList)
                 {
-                    if (config.RewardItems.Find(x => x.Shortname == item.shortname) != null) continue;
+                    if (_config.RewardItems.Find(x => x.Shortname == item.shortname) != null) continue;
 
-                    config.RewardItems.Add(new RewardItem {
-                        Shortname = item.shortname,
-                        Amount = 1
-                    });
+                    _config.RewardItems.Add(new RewardItem { Shortname = item.shortname, Amount = 1 });
                 }
 
                 SaveConfig();
@@ -80,7 +77,7 @@ namespace Oxide.Plugins
             }
         }
 
-        protected override void SaveConfig() => Config.WriteObject(config, true);
+        protected override void SaveConfig() => Config.WriteObject(_config, true);
 
         private class PluginConfig
         {
@@ -114,7 +111,7 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
-            permission.RegisterPermission(_permName, this);
+            permission.RegisterPermission(PermName, this);
 
             LoadUI();
 
@@ -126,7 +123,7 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            Instance = this;
+            _instance = this;
 
             ItemManager.Initialize();
             LoadConfig();
@@ -147,7 +144,7 @@ namespace Oxide.Plugins
 
         private void OnNewSave()
         {
-            if (!config.WipeOnNewSave)
+            if (!_config.WipeOnNewSave)
             {
                 return;
             }
@@ -271,13 +268,13 @@ namespace Oxide.Plugins
             public BasePlayer Player;
             public bool IsOpened;
             public bool IsReady;
-            private int _maxTicks = 20;
+            const int MAXTicks = 20;
             private int _ticks;
             private Coroutine _coroutine;
 
-            public static BoxController Find(ItemContainer container) => Instance._controllers.Find(x => x.Container != null && x.Container == container);
-            public static BoxController Find(BasePlayer player) => Instance._controllers.Find(x => x.Player != null && x.Player == player);
-            public static BoxController Find(uint id) => Instance._controllers.Find(x => x.Container != null && x.Container.uid == id);
+            public static BoxController Find(ItemContainer container) => _instance._controllers.Find(x => x.Container != null && x.Container == container);
+            public static BoxController Find(BasePlayer player) => _instance._controllers.Find(x => x.Player != null && x.Player == player);
+            public static BoxController Find(uint id) => _instance._controllers.Find(x => x.Container != null && x.Container.uid == id);
 
             public BoxController(BasePlayer player)
             {
@@ -296,7 +293,7 @@ namespace Oxide.Plugins
 
             public void Show()
             {
-                Instance.DestroyUI(Player);
+                _instance.DestroyUI(Player);
 
                 IsOpened = true;
 
@@ -319,12 +316,12 @@ namespace Oxide.Plugins
 
             public void Close()
             {
-                if (IsOpened && IsReady && Instance.stored.Players.ContainsKey(Player.userID))
+                if (IsOpened && IsReady && _instance._stored.Players.ContainsKey(Player.userID))
                 {
                     GiveItem();
 
-                    Instance.stored.Players[Player.userID]--;
-                    Instance.SaveData();
+                    _instance._stored.Players[Player.userID]--;
+                    _instance.SaveData();
                 }
 
                 Clear();
@@ -345,7 +342,7 @@ namespace Oxide.Plugins
 
             public void LootSpin()
             {
-                PlayEffect(_startPrefab);
+                PlayEffect(StartPrefab);
 
                 _coroutine = CommunityEntity.ServerInstance.StartCoroutine(LootTick());
             }
@@ -358,14 +355,14 @@ namespace Oxide.Plugins
 
                 Container.SetLocked(false);
 
-                PlayEffect(_successPrefab);
+                PlayEffect(SuccessPrefab);
             }
 
             public IEnumerator LootTick()
             {
                 yield return new WaitForSeconds(0.2f);
 
-                while (_ticks < _maxTicks)
+                while (_ticks < MAXTicks)
                 {
                     _ticks++;
 
@@ -384,7 +381,7 @@ namespace Oxide.Plugins
                 Container.itemList.Clear();
                 Container.MarkDirty();
 
-                RewardItem rewardItem = Instance.config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
+                RewardItem rewardItem = _instance._config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
                 if (rewardItem == null)
                 {
                     return;
@@ -445,7 +442,7 @@ namespace Oxide.Plugins
                 Container.Kill();
             }
 
-            public bool ValidContainer() => Player == null || Container?.itemList != null;
+            private bool ValidContainer() => Player == null || Container?.itemList != null;
 
             private void MoveItemToContainer(Item item, ItemContainer container, int slot = 0)
             {
@@ -468,7 +465,7 @@ namespace Oxide.Plugins
                 container.itemList.Add(item);
                 item.MarkDirty();
 
-                for (int i = 0; i < item.info.itemMods.Length; i++)
+                for (var i = 0; i < item.info.itemMods.Length - 1; i++)
                 {
                     item.info.itemMods[i].OnParentChanged(item);
                 }
@@ -511,9 +508,9 @@ namespace Oxide.Plugins
         private int GetPlayerBoxes(BasePlayer player)
         {
             int currentAmount;
-            if (!stored.Players.TryGetValue(player.userID, out currentAmount))
+            if (!_stored.Players.TryGetValue(player.userID, out currentAmount))
             {
-                stored.Players[player.userID] = currentAmount =  0;
+                _stored.Players[player.userID] = currentAmount =  0;
                 SaveData();
             }
 
@@ -522,17 +519,17 @@ namespace Oxide.Plugins
 
         private void SetPlayerBoxes(BasePlayer player, int giveAmount)
         {
-            if (!stored.Players.ContainsKey(player.userID))
-                stored.Players[player.userID] = giveAmount;
+            if (!_stored.Players.ContainsKey(player.userID))
+                _stored.Players[player.userID] = giveAmount;
             else
-                stored.Players[player.userID] += giveAmount;
+                _stored.Players[player.userID] += giveAmount;
 
             SaveData();
         }
 
         private void WipePlayerBoxes()
         {
-            stored.Players.Clear();
+            _stored.Players.Clear();
 
             SaveData();
         }
@@ -554,7 +551,7 @@ namespace Oxide.Plugins
                     AnchorMin = "0 0",
                     AnchorMax = "1 1"
                 }
-            }, "Overlay", _panelName);
+            }, "Overlay", PanelName);
 
             CuiLabel label = new CuiLabel {
                 Text = {
@@ -579,7 +576,7 @@ namespace Oxide.Plugins
                 Components = {
                     new CuiRawImageComponent
                     {
-                        Url = config.ImageURL
+                        Url = _config.ImageURL
                     },
                     new CuiRectTransformComponent
                     {
@@ -641,7 +638,7 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, _element);
         }
 
-        private void DestroyUI(BasePlayer player) => CuiHelper.DestroyUi(player, _panelName);
+        private void DestroyUI(BasePlayer player) => CuiHelper.DestroyUi(player, PanelName);
         #endregion
 
         #region Commands
@@ -765,7 +762,7 @@ namespace Oxide.Plugins
         #endregion
 
         #region Helpers
-        private bool HasPermission(BasePlayer player) => permission.UserHasPermission(player.UserIDString, _permName);
+        private bool HasPermission(BasePlayer player) => permission.UserHasPermission(player.UserIDString, PermName);
 
         private string Lang(string key, string id = null, params object[] args) => string.Format(lang.GetMessage(key, this, id), args);
         #endregion

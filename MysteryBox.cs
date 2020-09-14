@@ -10,7 +10,7 @@ namespace Oxide.Plugins
 {
     [Info("Mystery Box", "Bazz3l", "1.0.3")]
     [Description("Mystery box, unlock boxes with random loot items inside.")]
-    class MysteryBox : RustPlugin
+    public class MysteryBox : RustPlugin
     {
         #region Fields
         private const string _successPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
@@ -82,14 +82,14 @@ namespace Oxide.Plugins
 
         protected override void SaveConfig() => Config.WriteObject(config, true);
 
-        class PluginConfig
+        private class PluginConfig
         {
             public string ImageURL = "https://i.imgur.com/fCJrUYL.png";
             public bool WipeOnNewSave = true;
             public List<RewardItem> RewardItems = new List<RewardItem>();
         }
 
-        class RewardItem
+        private class RewardItem
         {
             public string Shortname;
             public int Amount;
@@ -265,7 +265,7 @@ namespace Oxide.Plugins
         #endregion
 
         #region Controller
-        class BoxController
+        private class BoxController
         {
             public ItemContainer Container;
             public BasePlayer Player;

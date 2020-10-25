@@ -5,44 +5,55 @@ using Oxide.Game.Rust.Cui;
 using Oxide.Core;
 using UnityEngine;
 using Newtonsoft.Json;
+using Random = System.Random;
 
 namespace Oxide.Plugins
 {
-    [Info("Mystery Box", "Bazz3l", "1.0.3")]
-    [Description("Mystery box, unlock boxes with random loot items inside.")]
+    [Info("Mystery Box", "Bazz3l", "1.0.4")]
+    [Description("Unlock mystery boxes with random loot items.")]
     public class MysteryBox : RustPlugin
     {
         #region Fields
+        
         private const string SuccessPrefab = "assets/prefabs/deployable/research table/effects/research-success.prefab";
         private const string StartPrefab = "assets/prefabs/deployable/repair bench/effects/skinchange_spraypaint.prefab";
-        private const string PanelName = "mysterybox_panel";
         private const string PermName = "mysterybox.use";
+        
         private readonly List<BoxController> _controllers = new List<BoxController>();
-        private readonly CuiElementContainer _element = new CuiElementContainer();
-        private CuiTextComponent _textComponent;
         private StoredData _stored;
         private PluginConfig _config;
         private static MysteryBox _instance;
+        
         #endregion
 
         #region Storage
-        class StoredData
+        
+        private class StoredData
         {
             public Dictionary<ulong, int> Players = new Dictionary<ulong, int>();
         }
 
-        void LoadData()
+        private void LoadData()
         {
             _stored = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
         }
 
-        void SaveData()
+        private void SaveData()
         {
             Interface.Oxide.DataFileSystem.WriteObject(Name, _stored);
         }
+        
+        private void ClearData()
+        {
+            _stored.Players.Clear();
+
+            SaveData();
+        }
+        
         #endregion
 
         #region Config
+        
         protected override void LoadDefaultConfig() => _config = new PluginConfig();
 
         protected override void LoadConfig()
@@ -62,10 +73,13 @@ namespace Oxide.Plugins
                 {
                     if (_config.RewardItems.Find(x => x.Shortname == item.shortname) != null) continue;
 
-                    _config.RewardItems.Add(new RewardItem { Shortname = item.shortname, Amount = 1 });
+                    _config.RewardItems.Add(new LootItem
+                    {
+                        Shortname = item.shortname, 
+                        MinAmount = 1,
+                        MaxAmount = 1
+                    });
                 }
-
-                SaveConfig();
 
                 PrintToConsole($"New config created {Name}.json.");
             }
@@ -73,28 +87,33 @@ namespace Oxide.Plugins
             {
                 LoadDefaultConfig();
 
-                PrintToConsole($"Invalid config {Name}.json, using default config.");
+                PrintError("The configuration file contains an error and has been replaced with a default config.\n" + "The error configuration file was saved in the .jsonError extension");
             }
+            
+            SaveConfig();
         }
 
-        protected override void SaveConfig() => Config.WriteObject(_config, true);
+        protected override void SaveConfig() => Config.WriteObject(_config);
 
         private class PluginConfig
         {
             public string ImageURL = "https://i.imgur.com/fCJrUYL.png";
             public bool WipeOnNewSave = true;
-            public List<RewardItem> RewardItems = new List<RewardItem>();
+            public readonly List<LootItem> RewardItems = new List<LootItem>();
         }
 
-        private class RewardItem
+        private class LootItem
         {
             public string Shortname;
-            public int Amount;
+            public int MinAmount;
+            public int MaxAmount;
             public bool Hide;
         }
+        
         #endregion
 
         #region Oxide
+        
         protected override void LoadDefaultMessages()
         {
             lang.RegisterMessages(new Dictionary<string, string> {
@@ -112,8 +131,11 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             permission.RegisterPermission(PermName, this);
-
-            LoadUI();
+            
+            if (!_config.WipeOnNewSave)
+            {
+                Unsubscribe("OnNewSave");
+            }
 
             foreach (BasePlayer player in BasePlayer.activePlayerList)
             {
@@ -132,8 +154,6 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
-            BasePlayer.activePlayerList.ToList().ForEach(x => DestroyUI(x));
-
             for (int i = 0; i < _controllers.Count; i++)
             {
                 _controllers[i]?.Destroy();
@@ -142,15 +162,7 @@ namespace Oxide.Plugins
             SaveData();
         }
 
-        private void OnNewSave()
-        {
-            if (!_config.WipeOnNewSave)
-            {
-                return;
-            }
-
-            WipePlayerBoxes();
-        }
+        private void OnNewSave() => ClearData();
 
         private void OnPlayerConnected(BasePlayer player)
         {
@@ -185,6 +197,27 @@ namespace Oxide.Plugins
             controller.Destroy();
 
             _controllers.Remove(controller);
+        }
+        
+        private object OnItemAction(Item item, string action, BasePlayer player)
+        {
+            if (item.skin != 879416808 || action != "open")
+            {
+                return null;
+            }
+
+            BoxController container = BoxController.Find(player);
+            if (container == null || !container.CanShow() || container.IsOpened)
+            {
+                return null;
+            }
+
+            item.RemoveFromContainer();
+            item.Remove();
+
+            container.Show();
+
+            return false;
         }
 
         private void OnItemRemovedFromContainer(ItemContainer itemContainer, Item item)
@@ -234,7 +267,7 @@ namespace Oxide.Plugins
         private object CanMoveItem(Item item, PlayerInventory playerInventory, uint containerId, int slot, int amount)
         {
             BoxController controllerFrom = BoxController.Find(item.parent);
-            BoxController controllerTo   = BoxController.Find(containerId);
+            BoxController controllerTo = BoxController.Find(containerId);
             if ((controllerFrom ?? controllerTo) == null)
             {
                 return null;
@@ -251,24 +284,23 @@ namespace Oxide.Plugins
         private object CanMoveItemTo(BoxController controller, Item item, int slot, int amount)
         {
             Item targetItem = controller?.Container?.GetSlot(slot);
-            if (targetItem != null)
-            {
-                controller.GiveItem(targetItem);
-                controller.Clear();
-            }
+            controller?.GiveItem(targetItem);
+            controller?.Clear();
 
             return null;
         }
+        
         #endregion
 
-        #region Controller
+        #region Core
+        
         private class BoxController
         {
-            public ItemContainer Container;
-            public BasePlayer Player;
+            private const int MAX_TICKS = 50;
+            public readonly ItemContainer Container;
+            private readonly BasePlayer Player;
             public bool IsOpened;
-            public bool IsReady;
-            const int MAXTicks = 20;
+            private bool IsReady;
             private int _ticks;
             private Coroutine _coroutine;
 
@@ -293,8 +325,6 @@ namespace Oxide.Plugins
 
             public void Show()
             {
-                _instance.DestroyUI(Player);
-
                 IsOpened = true;
 
                 _ticks = 0;
@@ -311,7 +341,7 @@ namespace Oxide.Plugins
 
                 Player.ClientRPCPlayer(null, Player, "RPC_OpenLootPanel", "generic");
 
-                LootSpin();
+                StartCoroutine();
             }
 
             public void Close()
@@ -319,38 +349,73 @@ namespace Oxide.Plugins
                 if (IsOpened && IsReady && _instance._stored.Players.ContainsKey(Player.userID))
                 {
                     GiveItem();
-
-                    _instance._stored.Players[Player.userID]--;
-                    _instance.SaveData();
+                }
+                
+                if (IsOpened && !IsReady)
+                {
+                    GivePlayerBox(Player);
                 }
 
                 Clear();
 
                 IsOpened = false;
-                IsReady  = false;
+                IsReady = false;
 
                 StopCoroutine();
             }
 
+            public void Destroy()
+            {
+                Close();
+
+                Container.Kill();
+            }
+            
+            public void Clear()
+            {
+                for (int i = 0; i < Container.itemList.Count; i++)
+                {
+                    Item item = Container.itemList[i];
+                    
+                    if (item == null) continue;
+                    
+                    RemoveItem(item);
+                }
+            }
+            
+            private void StartCoroutine()
+            {
+                PlayEffect(StartPrefab);
+
+                _coroutine = CommunityEntity.ServerInstance.StartCoroutine(LootSpinTick());
+            }
+            
             private void StopCoroutine()
             {
                 if (_coroutine != null)
                 {
                     CommunityEntity.ServerInstance.StopCoroutine(_coroutine);
+                    
+                    _coroutine = null;
                 }
             }
 
-            public void LootSpin()
+            private IEnumerator LootSpinTick()
             {
-                PlayEffect(StartPrefab);
+                while (_ticks < MAX_TICKS)
+                {
+                    _ticks++;
 
-                _coroutine = CommunityEntity.ServerInstance.StartCoroutine(LootTick());
+                    RandomItem();
+
+                    yield return new WaitForSeconds(0.01f * _ticks);
+                }
+
+                LootSpinEnd();
             }
-
-            public void LootReady()
+            
+            private void LootSpinEnd()
             {
-                _coroutine = null;
-
                 IsReady = true;
 
                 Container.SetLocked(false);
@@ -358,56 +423,19 @@ namespace Oxide.Plugins
                 PlayEffect(SuccessPrefab);
             }
 
-            public IEnumerator LootTick()
+            private void RandomItem()
             {
-                yield return new WaitForSeconds(0.2f);
+                Clear();
 
-                while (_ticks < MAXTicks)
-                {
-                    _ticks++;
-
-                    RandomItem();
-
-                    yield return new WaitForSeconds(0.2f);
-                }
-
-                LootReady();
-
-                yield break;
-            }
-
-            public void RandomItem()
-            {
-                Container.itemList.Clear();
-                Container.MarkDirty();
-
-                RewardItem rewardItem = _instance._config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
+                LootItem rewardItem = _instance._config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
                 if (rewardItem == null)
                 {
                     return;
                 }
 
-                Item item = ItemManager.CreateByName(rewardItem.Shortname, rewardItem.Amount);
-                if (item == null)
-                {
-                    return;
-                }
-
-                if (item.MoveToContainer(Container, -1, true))
-                {
-                    return;
-                }
-
-                item.Remove(0.0f);
+                ItemManager.CreateByName(rewardItem.Shortname, UnityEngine.Random.Range(rewardItem.MinAmount, rewardItem.MaxAmount))?.MoveToContainer(Container);
             }
-
-            public bool CanShow() => CanShow(Player);
-
-            bool CanShow(BasePlayer player)
-            {
-                return player != null && !player.IsDead();
-            }
-
+            
             public void GiveItem(Item itemDefault = null)
             {
                 if (!ValidContainer())
@@ -420,87 +448,24 @@ namespace Oxide.Plugins
                 {
                     return;
                 }
-
-                MoveItemToContainer(item, Player.inventory.containerMain);
-            }
-
-            public void Clear()
-            {
-                for (int i = 0; i < Container.itemList.Count; i++)
-                {
-                    RemoveItem(Container.itemList[i]);
-                }
-
-                Container.itemList.Clear();
-                Container.MarkDirty();
-            }
-
-            public void Destroy()
-            {
-                Close();
-
-                Container.Kill();
-            }
-
-            private bool ValidContainer() => Player == null || Container?.itemList != null;
-
-            private void MoveItemToContainer(Item item, ItemContainer container, int slot = 0)
-            {
-                while (container.SlotTaken(item, slot) && container.capacity > slot)
-                {
-                    slot++;
-                }
-
-                if (container.IsFull() || container.SlotTaken(item, slot))
-                {
-                    item.Drop(Player.transform.position, Vector3.up);
-                    return;
-                }
-
-                item.parent?.itemList?.Remove(item);
-                item.RemoveFromWorld();
-                item.position = slot;
-                item.parent   = container;
-
-                container.itemList.Add(item);
-                item.MarkDirty();
-
-                for (var i = 0; i < item.info.itemMods.Length - 1; i++)
-                {
-                    item.info.itemMods[i].OnParentChanged(item);
-                }
+                
+                _instance._stored.Players[Player.userID]--;
+                _instance.SaveData();
+                
+                Player.GiveItem(item);
             }
 
             private void RemoveItem(Item item)
             {
-                if (Network.Net.sv != null && item.uid > 0U)
-                {
-                    Network.Net.sv.ReturnUID(item.uid);
-
-                    item.uid = 0U;
-                }
-
-                if (item.contents != null)
-                {
-                    for (int i = 0; i < item.contents.itemList.Count; i++)
-                    {
-                        RemoveItem(item.contents.itemList[i]);
-                    }
-
-                    item.contents = null;
-                }
-
-                item.RemoveFromWorld();
-
-                item.parent?.itemList?.Remove(item);
-                item.parent = null;
-
-                BaseEntity entity = item.GetHeldEntity();
-                if (entity != null && entity.IsValid() && !entity.IsDestroyed)
-                {
-                    entity.Kill();
-                }
+                item.RemoveFromContainer();
+                item.Remove();
             }
+            
+            public bool CanShow() => CanShow(Player);
+
+            bool CanShow(BasePlayer player) => player != null && !player.IsDead();
+
+            private bool ValidContainer() => Player == null || Container?.itemList != null;
 
             private void PlayEffect(string prefab) => EffectNetwork.Send(new Effect(prefab, Player.transform.position, Vector3.zero), Player.net.connection);
         }
@@ -508,9 +473,11 @@ namespace Oxide.Plugins
         private int GetPlayerBoxes(BasePlayer player)
         {
             int currentAmount;
+            
             if (!_stored.Players.TryGetValue(player.userID, out currentAmount))
             {
-                _stored.Players[player.userID] = currentAmount =  0;
+                _stored.Players[player.userID] = 0;
+                
                 SaveData();
             }
 
@@ -526,123 +493,28 @@ namespace Oxide.Plugins
 
             SaveData();
         }
-
-        private void WipePlayerBoxes()
+        
+        private static void GivePlayerBox(BasePlayer player)
         {
-            _stored.Players.Clear();
-
-            SaveData();
-        }
-
-        private bool HasReachedLimit(BasePlayer player) => GetPlayerBoxes(player) <= 0;
-        #endregion
-
-        #region UI
-        private void LoadUI()
-        {
-            string panel = _element.Add(new CuiPanel {
-                CursorEnabled = true,
-
-                Image = {
-                    Color    = "0 0 0 0.65",
-                    Material = "assets/content/ui/uibackgroundblur-ingamemenu.mat"
-                },
-                RectTransform = {
-                    AnchorMin = "0 0",
-                    AnchorMax = "1 1"
-                }
-            }, "Overlay", PanelName);
-
-            CuiLabel label = new CuiLabel {
-                Text = {
-                    Font = "robotocondensed-regular.ttf",
-                    FontSize  = 14,
-                    Text      = "",
-                    Align     = TextAnchor.MiddleCenter,
-                },
-                RectTransform = {
-                    AnchorMin = "0.349 0.749",
-                    AnchorMax = "0.623 0.98"
-                }
-            };
-
-            _textComponent = label.Text;
-
-            _element.Add(label, panel);
-
-            _element.Add(new CuiElement
+            Item item = ItemManager.CreateByName("wrappedgift", 1, 879416808);
+            if (item == null)
             {
-                Parent     = panel,
-                Components = {
-                    new CuiRawImageComponent
-                    {
-                        Url = _config.ImageURL
-                    },
-                    new CuiRectTransformComponent
-                    {
-                        AnchorMin = "0.394 0.501",
-                        AnchorMax = "0.589 0.84"
-                    }
-                }
-            });
+                return;
+            }
 
-            _element.Add(new CuiButton {
-                Button =
-                {
-                    Color   = "0.6 0.6 0.6 0.24",
-                    Material = "assets/icons/greyout.mat",
-                    Command = "open.mysterybox"
-                },
-                Text =
-                {
-                    Font = "robotocondensed-regular.ttf",
-                    FontSize = 12,
-                    Text     = "OPEN BOX",
-                    Align    = TextAnchor.MiddleCenter
-                },
-                RectTransform =
-                {
-                    AnchorMin = "0.494 0.42",
-                    AnchorMax = "0.689 0.46"
-                }
-            }, panel);
+            item.name = "Mystery Box";
+            item.MarkDirty();
 
-            _element.Add(new CuiButton {
-                Button =
-                {
-                    Color   = "0.6 0.6 0.6 0.24",
-                    Material = "assets/icons/greyout.mat",
-                    Command = "close.mysterybox"
-                },
-                Text =
-                {
-                    Font = "robotocondensed-regular.ttf",
-                    FontSize = 12,
-                    Text     = "CLOSE",
-                    Align    = TextAnchor.MiddleCenter
-                },
-                RectTransform =
-                {
-                    AnchorMin = "0.292 0.42",
-                    AnchorMax = "0.488 0.46"
-                }
-            }, panel);
+            player.GiveItem(item);
         }
 
-        private void CreateIU(BasePlayer player)
-        {
-            int amount = GetPlayerBoxes(player);
-
-            _textComponent.Text = $"You have ({amount}) unopened boxes";
-
-            CuiHelper.AddUi(player, _element);
-        }
-
-        private void DestroyUI(BasePlayer player) => CuiHelper.DestroyUi(player, PanelName);
+        private bool LimitReached(BasePlayer player) => GetPlayerBoxes(player) <= 0;
+        
         #endregion
 
         #region Commands
-        [ChatCommand("mystery")]
+        
+        [ChatCommand("mbox")]
         private void MysteryCommand(BasePlayer player, string command, string[] args)
         {
             if (!HasPermission(player))
@@ -651,66 +523,25 @@ namespace Oxide.Plugins
                 return;
             }
 
-            if (HasReachedLimit(player))
+            if (LimitReached(player))
             {
                 player.ChatMessage(Lang("NoBoxes", player.UserIDString));
                 return;
             }
 
-            BoxController controller = BoxController.Find(player);
-            if (controller == null || !controller.CanShow() || controller.IsOpened)
+            if (player.inventory.containerBelt.IsFull() || player.inventory.containerMain.IsFull())
             {
-                player.ChatMessage(Lang("Error", player.UserIDString));
+                player.ChatMessage("Inventory full.");
                 return;
             }
 
-            CreateIU(player);
+            GivePlayerBox(player);
+            
+            player.ChatMessage("You received a mystery box.");
         }
 
-        [ConsoleCommand("open.mysterybox")]
-        private void OpenMysteryBox(ConsoleSystem.Arg arg)
-        {
-            BasePlayer player = arg.Player();
-            if (player == null)
-            {
-                return;
-            }
-
-            if (!HasPermission(player))
-            {
-                player.ChatMessage(Lang("NoPermission", player.UserIDString));
-                return;
-            }
-
-            if (HasReachedLimit(player))
-            {
-                player.ChatMessage(Lang("NoBoxes", player.UserIDString));
-                return;
-            }
-
-            BoxController container = BoxController.Find(player);
-            if (container == null || !container.CanShow() || container.IsOpened)
-            {
-                return;
-            }
-
-            NextTick(() => container.Show());
-        }
-
-        [ConsoleCommand("close.mysterybox")]
-        private void CloseMysteryBox(ConsoleSystem.Arg arg)
-        {
-            BasePlayer player = arg.Player();
-            if (player == null)
-            {
-                return;
-            }
-
-            DestroyUI(player);
-        }
-
-        [ConsoleCommand("give.mysterybox")]
-        private void GiveMysteryBox(ConsoleSystem.Arg arg)
+        [ConsoleCommand("mysterybox.give")]
+        private void GiveBox(ConsoleSystem.Arg arg)
         {
             if (arg.Player() != null)
             {
@@ -746,8 +577,8 @@ namespace Oxide.Plugins
             arg.ReplyWith(Lang("Given", target.UserIDString, target.userID, amount));
         }
 
-        [ConsoleCommand("wipe.mysterybox")]
-        private void WipeMysteryBox(ConsoleSystem.Arg arg)
+        [ConsoleCommand("mysterybox.wipe")]
+        private void WipeBoxes(ConsoleSystem.Arg arg)
         {
             if (arg.Player() != null)
             {
@@ -755,16 +586,19 @@ namespace Oxide.Plugins
                 return;
             }
 
-            WipePlayerBoxes();
+            ClearData();
 
             arg.ReplyWith(Lang("Wiped"));
         }
+        
         #endregion
 
         #region Helpers
+        
+        private string Lang(string key, string id = null, params object[] args) => string.Format(lang.GetMessage(key, this, id), args);
+
         private bool HasPermission(BasePlayer player) => permission.UserHasPermission(player.UserIDString, PermName);
 
-        private string Lang(string key, string id = null, params object[] args) => string.Format(lang.GetMessage(key, this, id), args);
         #endregion
     }
 }

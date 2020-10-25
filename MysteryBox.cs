@@ -118,11 +118,13 @@ namespace Oxide.Plugins
         {
             lang.RegisterMessages(new Dictionary<string, string> {
                 { "InvalidSyntax", "Invalid syntax: give.mysterybox <steamid> <amount>" },
+                { "NoInventory", "No inventory space." },
                 { "NoPermission", "No permission." },
                 { "NoBoxes", "You have 0 boxes left." },
                 { "NoPlayer", "No player found." },
                 { "Wiped", "Data cleared." },
-                { "Reward", "You have been rewarded {0} mystery boxes, /mystery" },
+                { "Reward", "You have been rewarded {0} mystery boxes, /mb" },
+                { "Give", "You have received a mystery box, /mb" },
                 { "Given", "{0} was given {1} boxes." },
                 { "Error", "Something went wrong." }
             }, this);
@@ -514,7 +516,7 @@ namespace Oxide.Plugins
 
         #region Commands
         
-        [ChatCommand("mbox")]
+        [ChatCommand("mb")]
         private void MysteryCommand(BasePlayer player, string command, string[] args)
         {
             if (!HasPermission(player))
@@ -537,7 +539,7 @@ namespace Oxide.Plugins
 
             GivePlayerBox(player);
             
-            player.ChatMessage("You received a mystery box.");
+            player.ChatMessage(Lang("Give", player.UserIDString));
         }
 
         [ConsoleCommand("mysterybox.give")]

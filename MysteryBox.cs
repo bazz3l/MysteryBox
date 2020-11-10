@@ -20,10 +20,11 @@ namespace Oxide.Plugins
         private const string PermName = "mysterybox.use";
         
         private readonly List<BoxController> _controllers = new List<BoxController>();
+        private readonly List<LootItem> _lootItems = new List<LootItem>();
         private StoredData _stored;
         private PluginConfig _config;
         private static MysteryBox _instance;
-        
+
         #endregion
 
         #region Storage
@@ -72,13 +73,36 @@ namespace Oxide.Plugins
                 foreach (ItemDefinition item in ItemManager.itemList)
                 {
                     if (_config.RewardItems.Find(x => x.Shortname == item.shortname) != null) continue;
-
-                    _config.RewardItems.Add(new LootItem
+                    
+                    switch (item.category)
                     {
-                        Shortname = item.shortname, 
-                        MinAmount = 1,
-                        MaxAmount = 1
-                    });
+                        case ItemCategory.Weapon:
+                            _config.RewardItems.Add(new LootItem
+                            {
+                                Shortname = item.shortname, 
+                                MinAmount = 1, 
+                                MaxAmount = 1
+                            });
+                            break;
+                        case ItemCategory.Ammunition:
+                            
+                            if (item.shortname.Contains("rocket"))
+                                _config.RewardItems.Add(new LootItem
+                                {
+                                    Shortname = item.shortname, 
+                                    MinAmount = 2, 
+                                    MaxAmount = 3
+                                });
+                            else
+                                _config.RewardItems.Add(new LootItem
+                                {
+                                    Shortname = item.shortname,
+                                    MinAmount = 60, 
+                                    MaxAmount = 128
+                                });
+
+                            break;
+                    }
                 }
 
                 PrintToConsole($"New config created {Name}.json.");
@@ -123,6 +147,7 @@ namespace Oxide.Plugins
                 { "NoBoxes", "You have 0 boxes left." },
                 { "NoPlayer", "No player found." },
                 { "Wiped", "Data cleared." },
+                { "Award", "Mystery boxes awarded." },
                 { "Reward", "You have been rewarded {0} mystery boxes, /mb" },
                 { "Give", "You have received a mystery box" },
                 { "Given", "{0} was given {1} boxes." },
@@ -133,7 +158,7 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             permission.RegisterPermission(PermName, this);
-            
+
             if (!_config.WipeOnNewSave)
             {
                 Unsubscribe("OnNewSave");
@@ -142,6 +167,13 @@ namespace Oxide.Plugins
             foreach (BasePlayer player in BasePlayer.activePlayerList)
             {
                 OnPlayerConnected(player);
+            }
+
+            foreach (LootItem lootItem in _config.RewardItems)
+            {
+                if (lootItem.Hide) continue;
+                
+                _lootItems.Add(lootItem);
             }
         }
 
@@ -162,6 +194,8 @@ namespace Oxide.Plugins
             }
 
             SaveData();
+
+            _instance = null;
         }
 
         private void OnNewSave() => ClearData();
@@ -179,7 +213,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            BoxController controller = BoxController.Find(player);
+            BoxController controller = FindController(player);
             if (controller != null)
             {
                 return;
@@ -190,7 +224,7 @@ namespace Oxide.Plugins
 
         private void OnPlayerDisconnected(BasePlayer player)
         {
-            BoxController controller = BoxController.Find(player);
+            BoxController controller = FindController(player);
             if (controller == null)
             {
                 return;
@@ -208,7 +242,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            BoxController container = BoxController.Find(player);
+            BoxController container = FindController(player);
             if (container == null || !container.CanShow() || container.IsOpened)
             {
                 return null;
@@ -229,7 +263,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            BoxController controller = BoxController.Find(itemContainer);
+            BoxController controller = FindController(itemContainer);
             BasePlayer player = itemContainer.GetOwnerPlayer();
             if (controller == null || player == null)
             {
@@ -247,7 +281,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            BoxController.Find(player)?.Close();
+            FindController(player)?.Close();
         }
 
         private object CanLootPlayer(BasePlayer looter, UnityEngine.Object target)
@@ -257,7 +291,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            BoxController controller = BoxController.Find(looter);
+            BoxController controller = FindController(looter);
             if (controller == null || !controller.IsOpened)
             {
                 return null;
@@ -268,8 +302,8 @@ namespace Oxide.Plugins
 
         private object CanMoveItem(Item item, PlayerInventory playerInventory, uint containerId, int slot, int amount)
         {
-            BoxController controllerFrom = BoxController.Find(item.parent);
-            BoxController controllerTo = BoxController.Find(containerId);
+            BoxController controllerFrom = FindController(item.parent);
+            BoxController controllerTo = FindController(containerId);
             if ((controllerFrom ?? controllerTo) == null)
             {
                 return null;
@@ -300,15 +334,11 @@ namespace Oxide.Plugins
         {
             private const int MAX_TICKS = 50;
             public readonly ItemContainer Container;
-            private readonly BasePlayer Player;
+            public BasePlayer Player;
             public bool IsOpened;
             private bool IsReady;
             private int _ticks;
             private Coroutine _coroutine;
-
-            public static BoxController Find(ItemContainer container) => _instance._controllers.Find(x => x.Container != null && x.Container == container);
-            public static BoxController Find(BasePlayer player) => _instance._controllers.Find(x => x.Player != null && x.Player == player);
-            public static BoxController Find(uint id) => _instance._controllers.Find(x => x.Container != null && x.Container.uid == id);
 
             public BoxController(BasePlayer player)
             {
@@ -329,7 +359,7 @@ namespace Oxide.Plugins
             {
                 IsOpened = true;
 
-                _ticks = 0;
+                ResetTick();
 
                 Container.SetLocked(true);
 
@@ -355,7 +385,7 @@ namespace Oxide.Plugins
                 
                 if (IsOpened && !IsReady)
                 {
-                    GivePlayerBox(Player);
+                    _instance.GivePlayerBox(Player);
                 }
 
                 Clear();
@@ -394,23 +424,35 @@ namespace Oxide.Plugins
             
             private void StopCoroutine()
             {
-                if (_coroutine != null)
+                if (_coroutine == null)
                 {
-                    CommunityEntity.ServerInstance.StopCoroutine(_coroutine);
-                    
-                    _coroutine = null;
+                    return;
                 }
+                
+                CommunityEntity.ServerInstance.StopCoroutine(_coroutine);
+                
+                _coroutine = null;
+            }
+
+            private void ResetTick()
+            {
+                _ticks = 0;
+            }
+
+            private void LootTick()
+            {
+                _ticks++;
+                
+                RandomItem();
             }
 
             private IEnumerator LootSpinTick()
             {
                 while (_ticks < MAX_TICKS)
                 {
-                    _ticks++;
+                    LootTick();
 
-                    RandomItem();
-
-                    yield return new WaitForSeconds(0.01f * _ticks);
+                    yield return new WaitForSeconds(0.1f);
                 }
 
                 LootSpinEnd();
@@ -429,7 +471,7 @@ namespace Oxide.Plugins
             {
                 Clear();
 
-                LootItem rewardItem = _instance._config.RewardItems.Where(x => !x.Hide).ToList().GetRandom();
+                LootItem rewardItem = _instance._lootItems.GetRandom();
                 if (rewardItem == null)
                 {
                     return;
@@ -450,10 +492,7 @@ namespace Oxide.Plugins
                 {
                     return;
                 }
-                
-                _instance._stored.Players[Player.userID]--;
-                _instance.SaveData();
-                
+
                 Player.GiveItem(item);
             }
 
@@ -465,7 +504,7 @@ namespace Oxide.Plugins
             
             public bool CanShow() => CanShow(Player);
 
-            bool CanShow(BasePlayer player) => player != null && !player.IsDead();
+            private bool CanShow(BasePlayer player) => player != null && !player.IsDead();
 
             private bool ValidContainer() => Player == null || Container?.itemList != null;
 
@@ -474,29 +513,29 @@ namespace Oxide.Plugins
 
         private int GetPlayerBoxes(BasePlayer player)
         {
-            int currentAmount;
-            
-            if (!_stored.Players.TryGetValue(player.userID, out currentAmount))
-            {
-                _stored.Players[player.userID] = 0;
-                
-                SaveData();
-            }
+            EnsurePlayerBoxesKey(player.userID);
 
-            return currentAmount;
+            return _stored.Players[player.userID];
         }
 
         private void SetPlayerBoxes(BasePlayer player, int giveAmount)
         {
-            if (!_stored.Players.ContainsKey(player.userID))
-                _stored.Players[player.userID] = giveAmount;
-            else
-                _stored.Players[player.userID] += giveAmount;
+            EnsurePlayerBoxesKey(player.userID);
 
-            SaveData();
+            _stored.Players[player.userID] += giveAmount;
+
+            player.ChatMessage(Lang("Reward", player.UserIDString, giveAmount));
+        }
+
+        private void EnsurePlayerBoxesKey(ulong userID, int defaultValue = 0)
+        {
+            if (!_stored.Players.ContainsKey(userID))
+            {
+                _stored.Players[userID] = defaultValue;
+            }
         }
         
-        private static void GivePlayerBox(BasePlayer player)
+        private void GivePlayerBox(BasePlayer player)
         {
             Item item = ItemManager.CreateByName("wrappedgift", 1, 879416808);
             if (item == null)
@@ -511,6 +550,10 @@ namespace Oxide.Plugins
         }
 
         private bool LimitReached(BasePlayer player) => GetPlayerBoxes(player) <= 0;
+        
+        private BoxController FindController(ItemContainer container) => _controllers.Find(x => x.Container != null && x.Container == container);
+        private BoxController FindController(BasePlayer player) => _controllers.Find(x => player != null && player == x.Player);
+        private BoxController FindController(uint id) => _controllers.Find(x => x.Container != null && x.Container.uid == id);
         
         #endregion
 
@@ -533,56 +576,73 @@ namespace Oxide.Plugins
 
             if (player.inventory.containerBelt.IsFull() || player.inventory.containerMain.IsFull())
             {
-                player.ChatMessage("Inventory full.");
+                player.ChatMessage(Lang("NoInventory", player.UserIDString));
                 return;
             }
 
             GivePlayerBox(player);
             
+            _stored.Players[player.userID]--;
+            
+            SaveData();
+
             player.ChatMessage(Lang("Give", player.UserIDString));
         }
 
         [ConsoleCommand("mysterybox.give")]
         private void GiveBox(ConsoleSystem.Arg arg)
         {
-            if (arg.Player() != null)
+            if (!arg.IsRcon)
             {
                 arg.ReplyWith(Lang("NoPermission"));
                 return;
             }
 
-            if (arg.Args.Length != 2)
+            if (!arg.HasArgs(2))
             {
                 arg.ReplyWith(Lang("InvalidSyntax"));
                 return;
             }
 
-            BasePlayer target = BasePlayer.Find(arg.Args[0]);
+            BasePlayer target = BasePlayer.Find(arg.GetString(0));
             if (target == null)
             {
                 arg.ReplyWith(Lang("NoPlayer"));
                 return;
             }
 
-            int amount;
+            int amount = arg.GetInt(1);
 
-            if (!int.TryParse(arg.Args[1], out amount))
+            SetPlayerBoxes(target, amount);
+            
+            SaveData();
+
+            arg.ReplyWith(Lang("Given", target.UserIDString, target.userID, amount));
+        }
+        
+        [ConsoleCommand("mysterybox.award")]
+        private void AwardBoxes(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsRcon)
             {
-                arg.ReplyWith(Lang("InvalidSyntax"));
+                arg.ReplyWith(Lang("NoPermission"));
                 return;
             }
 
-            SetPlayerBoxes(target, amount);
-
-            target.ChatMessage(Lang("Reward", target.UserIDString, amount));
-
-            arg.ReplyWith(Lang("Given", target.UserIDString, target.userID, amount));
+            foreach (BasePlayer player in BasePlayer.activePlayerList)
+            {
+                SetPlayerBoxes(player, 1);
+            }
+            
+            SaveData();
+            
+            arg.ReplyWith(Lang("Award"));
         }
 
         [ConsoleCommand("mysterybox.wipe")]
         private void WipeBoxes(ConsoleSystem.Arg arg)
         {
-            if (arg.Player() != null)
+            if (!arg.IsRcon)
             {
                 arg.ReplyWith(Lang("NoPermission"));
                 return;
